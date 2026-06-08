@@ -1,0 +1,97 @@
+# ════════════════════════════════════════════════════════════════════════════
+# docker-compose.yml — Ambiente completo de desenvolvimento
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Serviços:
+#   postgres  → banco de dados PostgreSQL 16
+#   backend   → FastAPI com Alembic + uvicorn
+#
+# Rede interna: os serviços se comunicam por nome (postgres:5432).
+# O host não expõe o Postgres publicamente em produção.
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine   # alpine: imagem menor, menor superfície de ataque
+    container_name: secure_api_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-appuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apppass}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+
+    ports:
+      # Expõe localmente para inspeção com psql/DBeaver em desenvolvimento
+      # Em produção: remova esta linha ou use 127.0.0.1:5432:5432
+      - "5432:5432"
+
+    volumes:
+      # Dados persistidos no volume Docker (sobrevivem a `docker compose down`)
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      # Verifica se o Postgres está pronto para aceitar conexões
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-appuser} -d ${POSTGRES_DB:-appdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    networks:
+      - app_network
+
+  # ── Backend FastAPI ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend           # contexto = pasta backend/ (onde está o Dockerfile)
+      dockerfile: Dockerfile
+      target: runtime      # usa o stage runtime do multi-stage build
+    container_name: secure_api_backend
+    restart: unless-stopped
+
+    # Carrega variáveis de ambiente do arquivo .env
+    # O .env NÃO é commitado — use .env.example como template
+    env_file:
+      - ./backend/.env
+
+    ports:
+      - "8000:8000"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # Aguarda o healthcheck do postgres passar antes de iniciar o backend
+        # Isso evita "connection refused" no startup do Alembic
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+    networks:
+      - app_network
+
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/migrations:/app/migrations 
+
+    # Volumes para hot-reload em desenvolvimento (opcional)
+    # Descomente para desenvolvimento com --reload:
+    # volumes:
+    #   - ./app:/app/app
+    # command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+# ── Volumes ─────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+
+# ── Redes ────────────────────────────────────────────────────────────────────
+networks:
+  app_network:
+    driver: bridge
+    # Rede interna isolada: serviços se comunicam por nome, não por IP
