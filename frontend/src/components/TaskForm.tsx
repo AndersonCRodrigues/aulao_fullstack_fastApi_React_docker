@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api } from '../services/api';
+import type { TaskCreate } from '../types/Task';
 
 export const TaskForm = ({ onTaskCreated }: { onTaskCreated: () => void }) => {
   const [title, setTitle] = useState('');
@@ -7,8 +8,14 @@ export const TaskForm = ({ onTaskCreated }: { onTaskCreated: () => void }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await api.createTask(title, content);
-    onTaskCreated(); // Atualiza a lista após criar
+
+    const data: TaskCreate = {
+      title,
+      content: content || null,
+    };
+
+    await api.createTask(data);
+    onTaskCreated();
   };
 
   return (
